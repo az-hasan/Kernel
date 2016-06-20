@@ -6,23 +6,36 @@
 #include <linux/kernel.h> /* Needed for KERN_INFO */
 #include <linux/module.h> /* All kernel modules need this */
 
+#include <linux/types.h> /* Needed for dev_t */
+//#include <linux/kdev_t.h> /* Needed for MAJOR(dev) */
+#include <linux/device.h> /* Needed for class_create */
+#include <linux/export.h> /* Needed for THIS_MODULE */
+#include <linux/cdev.h> /* Needed for cdev_add */
+
 #define DEVICE_NAME "hello"
 #define DEVICE_AUTHOR "Aisha Hasan"
+#define NUM_DEVICES 1
+#define MINOR_NUM 0
 
-/* macro to describe who the driver's author is */
-//MODULE_AUTHOR(DEVICE_AUTHOR);
+/* macros to describe driver's author & license */
+MODULE_AUTHOR(DEVICE_AUTHOR);
+MODULE_LICENSE("GPL");
 
 static int hello_init(void);
 static void hello_exit(void);
 //static void device_open(void);
 
-int major_num;
+static dev_t majorNum; /* Device major number*/
+static struct class *helloClass; /*Device Class*/
+static struct cdev helloClassDeviceStruct;
+static struct device *helloClassDevice; /* Device */
 
 /*
 * Holds pointers to functions to be defined by driver, to be used when calling
 * "cat /dev/theprocs".
 */
 struct file_operations fops = {
+	.owner = THIS_MODULE
 //	.open = device_open
 };
 
@@ -38,23 +51,63 @@ struct file_operations fops = {
 * function is returned, otherwise 0 (success) is returned. 
 */
 static int hello_init(void){
-	printk(KERN_INFO "Hello world");
 
-	major_num = register_chrdev(0, DEVICE_NAME, &fops);
+	int err;
+	printk(KERN_INFO "Hello world\n");
+	
+	err = alloc_chrdev_region(&majorNum, MINOR_NUM, NUM_DEVICES,
+		DEVICE_NAME);	
 
-	if(major_num < 0){
-		printk(KERN_INFO "Could not register device\n");
-		return major_num;
+	if(err < 0){
+		printk(KERN_INFO "Error registering device\n");
 	}
 
-	printk(KERN_INFO "Device \"%s\" was assigned major number %d\n",
-		DEVICE_NAME, major_num);
+	//get allocated major number from "majorNum" & try to create a class
+	// with our device name
+	printk(KERN_INFO "device \"%s\" got allocated major number %d\n", 
+		DEVICE_NAME, MAJOR(majorNum));
+
+	helloClass = class_create(THIS_MODULE, DEVICE_NAME);
+	err = IS_ERR(helloClass);
+	
+	if(err){
+		printk(KERN_INFO "Error creating class\n");
+		unregister_chrdev_region(majorNum, NUM_DEVICES);
+		return err;
+	}
+
+	//initialize and add device to system
+	cdev_init(&helloClassDeviceStruct, &fops);
+	err = cdev_add(&helloClassDeviceStruct, majorNum, NUM_DEVICES);
+	
+	if(err < 0){
+		printk(KERN_INFO "Error adding device\n");
+		unregister_chrdev_region(majorNum, NUM_DEVICES);
+		return err;
+	}
+
+	//create device and register with sysfs
+	helloClassDevice = device_create(helloClass, NULL, majorNum, NULL, DEVICE_NAME);
+	err = IS_ERR(helloClassDevice);
+	
+	if(err){
+		printk(KERN_INFO "Error creating device\n");
+		cdev_del(&helloClassDeviceStruct);
+		class_destroy(helloClass);
+		unregister_chrdev_region(majorNum, NUM_DEVICES);
+		return err;
+	}	
+
 	return 0;
 }
 
 /* Unregisters device and exits */
 static void hello_exit(void){
-	unregister_chrdev(major_num, DEVICE_NAME);
+	printk(KERN_INFO ".........destroying device, class, and unregistering\n");
+	device_destroy(helloClass, majorNum);
+	cdev_del(&helloClassDeviceStruct);
+	class_destroy(helloClass);
+	unregister_chrdev_region(majorNum, NUM_DEVICES);
 	printk(KERN_INFO "Goodbye world\n");
 }
 
