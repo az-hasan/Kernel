@@ -1,54 +1,71 @@
 /*
 *	hello.c - The simplest kernel module
 */
-#include <linux/fs.h> /* Needed for device_open */
-#include <linux/init.h> /* Needed for macros */
-#include <linux/kernel.h> /* Needed for KERN_INFO */
-#include <linux/module.h> /* All kernel modules need this */
 
-#include <linux/types.h> /* Needed for dev_t */
-//#include <linux/kdev_t.h> /* Needed for MAJOR(dev) */
-#include <linux/device.h> /* Needed for class_create */
-#include <linux/export.h> /* Needed for THIS_MODULE */
-#include <linux/cdev.h> /* Needed for cdev_add */
+#include "hello.h"
 
-#define DEVICE_NAME "hello"
-#define DEVICE_AUTHOR "Aisha Hasan"
-#define NUM_DEVICES 1
-#define MINOR_NUM 0
 
-/* macros to describe driver's author & license */
-MODULE_AUTHOR(DEVICE_AUTHOR);
-MODULE_LICENSE("GPL");
+/* 
+* Called when the device file is opened.
+* Point the xxxxx to the message buffer. Copy a string to buffer. 
+* Point message pointer to start of buffer, and increase the use count
+* (see: https://www.kernel.org/doc/htmldocs/kernel-hacking/routines-module-use-counters.html)
+*/
+static int device_open(struct inode *fileSysObj, struct file *filep){
+	int numBytes;
+	printk(KERN_INFO "device name \"%s\" request to open\n", DEVICE_NAME);
+	
+	filep->private_data = messageBuf;
+	numBytes = sprintf(messageBuf, "%s", message);
+	printk(KERN_INFO "device \"%s\" message = %d bytes\n", DEVICE_NAME, numBytes);
 
-static int hello_init(void);
-static void hello_exit(void);
-//static void device_open(void);
+	messageLen = numBytes;		
+	messagep = messageBuf;
 
-static dev_t majorNum; /* Device major number*/
-static struct class *helloClass; /*Device Class*/
-static struct cdev helloClassDeviceStruct;
-static struct device *helloClassDevice; /* Device */
+	return 0;
+}
+
+
+static int device_release(struct inode *inode, struct file *filep){
+//	module_put(THIS_MODULE);
+	return 0;
+}
 
 /*
-* Holds pointers to functions to be defined by driver, to be used when calling
-* "cat /dev/theprocs".
+* Called when a process, which already opened the dev file, attempts to
+* read from it.
+* Puts characters (bytes) from messageBuf into the users buffer, using messagep
+* to iterate through messageBuf. If the user has already reached the end of the
+* messageBuf, return 0 to signal we're done reading;
 */
-struct file_operations fops = {
-	.owner = THIS_MODULE
-//	.open = device_open
-};
+static ssize_t device_read(struct file *filep,	/* see include/linux/fs.h   */
+			   char *buffer,	/* buffer to fill with data */
+			   size_t length,	/* length of the buffer     */
+			   loff_t *offset){
 
-//void device_open(void){
-	//do stuff
-//}
+	int bytes_read = 0;
+	printk(KERN_INFO "device name \"%s\" request to read\n", DEVICE_NAME);
+
+	if(*messagep == 0) return 0; //if at the end of msg, return 0
+	
+	//put data in the buffer
+	while(length && *messagep){
+		printk(KERN_INFO "to user: %s, bytes read: %d\n", messagep, bytes_read);
+		put_user(*(messagep++), buffer++);
+		length --;
+		bytes_read++;
+	}
+
+	printk(KERN_INFO "/dev/%s read succesfully\n", DEVICE_NAME);
+	return bytes_read;
+}
 
 /*
 * Registers device with the kernel, with an (unused) major number automatically
 * assigned by the kernel.
 *
-* If there is an error while registering the device, the return value of the
-* function is returned, otherwise 0 (success) is returned. 
+* If there is an error while registering the device, the returned error value 
+* is returned, otherwise 0 (success) is returned. 
 */
 static int hello_init(void){
 
@@ -60,6 +77,7 @@ static int hello_init(void){
 
 	if(err < 0){
 		printk(KERN_INFO "Error registering device\n");
+		return err;
 	}
 
 	//get allocated major number from "majorNum" & try to create a class
@@ -78,6 +96,7 @@ static int hello_init(void){
 
 	//initialize and add device to system
 	cdev_init(&helloClassDeviceStruct, &fops);
+	helloClassDeviceStruct.owner = THIS_MODULE;
 	err = cdev_add(&helloClassDeviceStruct, majorNum, NUM_DEVICES);
 	
 	if(err < 0){
