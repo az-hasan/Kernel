@@ -7,27 +7,70 @@
 
 /* 
 * Called when the device file is opened.
-* Point the xxxxx to the message buffer. Copy a string to buffer. 
-* Point message pointer to start of buffer, and increase the use count
-* (see: https://www.kernel.org/doc/htmldocs/kernel-hacking/routines-module-use-counters.html)
+* 
+* Write list of processes to message buffer. Resize buffer by twice the current
+* size if number of lines will exceed current buffer size. ("14" in assignment
+* of lineLen are extra characters to formatting printing processes).
+*
+* Set filep's private_data to point to messageBuf.
+* Point messagep to private_data (used in device_read to read message buffer to user)
 */
 static int device_open(struct inode *fileSysObj, struct file *filep){
-	int numBytes;
+	char *tempBuf;
+	int lineLen;
+	int bufLines;	
+	int numLines;
+	size_t numBytes;
+	struct task_struct *task;
+	
+	lineLen = (sizeof task->comm) + (sizeof task->pid) + 14;
+	numLines = 40;
+	bufLines = 0;
+	numBytes = 0;
+
 	printk(KERN_INFO "device name \"%s\" request to open\n", DEVICE_NAME);
+
+	/* ================== write list of processes to message buffer ======= */
+	messageBuf = kmalloc(numLines*lineLen, GFP_KERNEL);
+
+	for_each_process(task){
+		//printk(KERN_INFO "all Procs: %s, %d\n", task->comm, task->pid);
+		//printk(KERN_INFO "msgBuf length: %zu", strlen(messageBuf));
+		numBytes += snprintf(messageBuf + strlen(messageBuf), lineLen,
+				"all Procs: %s, %d\n", task->comm, task->pid); 
+		bufLines++;
+	
+		if(bufLines == numLines){
+			printk(KERN_INFO "bufLines %d, numLines %d: Reallocating buffer....\n",
+				bufLines, numLines);
+			numLines *= 2;
+			tempBuf = krealloc(messageBuf, numLines * lineLen, GFP_KERNEL);
+
+			if(tempBuf == NULL){
+				printk(KERN_INFO "Error reallocating buffer\n");
+				kfree(messageBuf);
+				return -1;
+			}
+			
+			messageBuf = tempBuf;
+		}
+	}
+
+	printk(KERN_INFO "bufLines: %d\n", bufLines);
+	printk(KERN_INFO "device \"%s\" message = %zu bytes\n", DEVICE_NAME, numBytes);
 	
 	filep->private_data = messageBuf;
-	numBytes = sprintf(messageBuf, "%s", message);
-	printk(KERN_INFO "device \"%s\" message = %d bytes\n", DEVICE_NAME, numBytes);
-
-	messageLen = numBytes;		
-	messagep = messageBuf;
+	messagep = filep->private_data;
 
 	return 0;
 }
 
-
+/* Frees message buffer if not already free */
 static int device_release(struct inode *inode, struct file *filep){
-//	module_put(THIS_MODULE);
+	if(messageBuf != NULL){
+		printk("Freeing memory\n");
+		kfree(messageBuf);
+	}
 	return 0;
 }
 
@@ -50,7 +93,7 @@ static ssize_t device_read(struct file *filep,	/* see include/linux/fs.h   */
 	
 	//put data in the buffer
 	while(length && *messagep){
-		printk(KERN_INFO "to user: %s, bytes read: %d\n", messagep, bytes_read);
+		//printk(KERN_INFO "to user: %s, bytes read: %d\n", messagep, bytes_read);
 		put_user(*(messagep++), buffer++);
 		length --;
 		bytes_read++;

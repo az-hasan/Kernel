@@ -8,13 +8,17 @@
 #include <linux/export.h> /* Needed for THIS_MODULE */
 #include <linux/cdev.h> /* Needed for cdev_add */
 #include <asm/uaccess.h> /* Needed for copy_to_user and put_user*/
+#include <linux/sched.h> /* Needed for for_each_processes */
+#include <linux/slab.h> /* Needed for malloc/realloc/free */
+
+//#include <linux/proc_fs.h>
 
 /*============================ definitions ==================================*/
-#define DEVICE_NAME "hello"
+#define DEVICE_NAME "theprocs"
 #define DEVICE_AUTHOR "Aisha Hasan"
 #define NUM_DEVICES 1
 #define MINOR_NUM 0
-#define BUFFER_SIZE 4000
+//#define BUFFER_SIZE 4000
 
 /* macros to describe driver's author & license */
 MODULE_AUTHOR(DEVICE_AUTHOR);
@@ -34,10 +38,9 @@ static dev_t majorNum; /* Device major number*/
 static struct class *helloClass; /*Device Class*/
 static struct cdev helloClassDeviceStruct;
 static struct device *helloClassDevice; /* Device */
-char *message = "cheese\n\0";
 char *messagep;
-char messageBuf[BUFFER_SIZE];
-unsigned long messageLen;
+char *messageBuf;
+
 
 /*
 * Holds pointers to functions to be defined by driver, to be used when calling
